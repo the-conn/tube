@@ -16,3 +16,8 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 futures-util = "0.3.32"
 tokio-util = { version = "0.7.18", features = ["io-util"] }
+
+[dev-dependencies]
+wiremock = "0.6.5"
+tempfile = "3.27.0"
+serial_test = "3.4.0"

@@ -118,3 +118,132 @@ impl TubeConfig {
     &self.execution.user_script_path
   }
 }
+
+impl TubeConfig {
+  pub fn new_for_test(
+    put_url: &str,
+    poke_url: &str,
+    get_url: &str,
+    workspace_dir: &str,
+    run_id: &str,
+    node_name: &str,
+    user_script_path: &str,
+  ) -> Self {
+    TubeConfig {
+      execution: ExecutionConfig {
+        put_url: put_url.into(),
+        poke_url: poke_url.into(),
+        run_id: run_id.into(),
+        node_name: node_name.into(),
+        user_script_path: user_script_path.into(),
+      },
+      log: LogConfig { level: "info".into() },
+      workspace: WorkspaceConfig {
+        get_url: get_url.into(),
+        dir: workspace_dir.into(),
+      },
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serial_test::serial;
+
+  struct EnvVarGuard {
+    key: String,
+    original: Option<String>,
+  }
+
+  impl EnvVarGuard {
+    fn set(key: &str, val: &str) -> Self {
+      let original = env::var(key).ok();
+      unsafe { env::set_var(key, val) };
+      EnvVarGuard { key: key.to_string(), original }
+    }
+
+  }
+
+  impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+      match &self.original {
+        Some(v) => unsafe { env::set_var(&self.key, v) },
+        None => unsafe { env::remove_var(&self.key) },
+      }
+    }
+  }
+
+  #[test]
+  #[serial]
+  fn test_missing_put_url() {
+    let _env = EnvVarGuard::set("ENV", "test");
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__PUT_URL", "");
+    let result = TubeConfig::load();
+    assert!(matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("PUT_URL")));
+  }
+
+  #[test]
+  #[serial]
+  fn test_missing_poke_url() {
+    let _env = EnvVarGuard::set("ENV", "test");
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__POKE_URL", "");
+    let result = TubeConfig::load();
+    assert!(matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("POKE_URL")));
+  }
+
+  #[test]
+  #[serial]
+  fn test_missing_run_id() {
+    let _env = EnvVarGuard::set("ENV", "test");
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__RUN_ID", "");
+    let result = TubeConfig::load();
+    assert!(matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("RUN_ID")));
+  }
+
+  #[test]
+  #[serial]
+  fn test_missing_node_name() {
+    let _env = EnvVarGuard::set("ENV", "test");
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__NODE_NAME", "");
+    let result = TubeConfig::load();
+    assert!(matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("NODE_NAME")));
+  }
+
+  #[test]
+  #[serial]
+  fn test_missing_user_script_path() {
+    let _env = EnvVarGuard::set("ENV", "test");
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__USER_SCRIPT_PATH", "");
+    let result = TubeConfig::load();
+    assert!(
+      matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("USER_SCRIPT_PATH"))
+    );
+  }
+
+  #[test]
+  #[serial]
+  fn test_missing_workspace_dir() {
+    let _env = EnvVarGuard::set("ENV", "test");
+    let _g = EnvVarGuard::set("TUBE__WORKSPACE__DIR", "");
+    let result = TubeConfig::load();
+    assert!(
+      matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("WORKSPACE__DIR"))
+    );
+  }
+
+  #[test]
+  #[serial]
+  fn test_load_succeeds_with_all_required_vars() {
+    let _env = EnvVarGuard::set("ENV", "test");
+    let result = TubeConfig::load();
+    assert!(result.is_ok());
+  }
+
+  #[test]
+  fn test_log_level_invalid_falls_back_to_info() {
+    let mut config = TubeConfig::new_for_test("u", "u", "", "/tmp", "r", "n", "/s");
+    config.log.level = "bogus".into();
+    assert_eq!(config.log_level(), tracing::Level::INFO);
+  }
+}

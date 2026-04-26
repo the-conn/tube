@@ -100,3 +100,26 @@ pub async fn poke_backend(config: &TubeConfig, client: &Client) -> Result<(), St
 
   Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_time_millis_is_reasonable() {
+    let t = time_millis().unwrap();
+    assert!(t > 1_700_000_000_000, "time_millis returned unreasonably small value: {}", t);
+  }
+
+  #[test]
+  fn test_status_error_from_system_time() {
+    use std::time::{Duration, SystemTime};
+    let future = SystemTime::UNIX_EPOCH
+      .checked_sub(Duration::from_secs(1))
+      .unwrap_or(SystemTime::UNIX_EPOCH);
+    let result = future.duration_since(SystemTime::now());
+    if let Err(e) = result {
+      let _err: StatusError = e.into();
+    }
+  }
+}

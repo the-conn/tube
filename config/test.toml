@@ -1,0 +1,8 @@
+[execution]
+put_url = "http://localhost:18080/status"
+poke_url = "http://localhost:18080/poke"
+run_id = "test-run-id"
+node_name = "test-node"
+
+[workspace]
+dir = "/tmp/test-workspace"

@@ -45,3 +45,23 @@ pub async fn create_workspace(config: &TubeConfig) -> Result<(), WorksapceError>
   info!("Workspace created successfully");
   Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use tempfile::TempDir;
+
+  #[tokio::test]
+  async fn test_empty_get_url_skips_download() {
+    let workspace = TempDir::new().unwrap();
+    let config = TubeConfig::new_for_test("u", "u", "", workspace.path().to_str().unwrap(), "r", "n", "/s");
+    assert!(create_workspace(&config).await.is_ok());
+  }
+
+  #[test]
+  fn test_error_variant_display() {
+    let io_err = std::io::Error::new(std::io::ErrorKind::Other, "boom");
+    let err = WorksapceError::Io(io_err);
+    assert!(err.to_string().contains("Archive or Decompression IO failed"));
+  }
+}

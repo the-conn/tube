@@ -1,0 +1,13 @@
+[execution]
+user_script_path = "/tmp/user_script.sh"
+put_url = ""
+poke_url = ""
+run_id = ""
+node_name = ""
+
+[log]
+level = "info"
+
+[workspace]
+get_url = ""
+dir = "/workspace"

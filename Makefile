@@ -1,17 +1,23 @@
-REGISTRY        ?= quay.io
-REPOSITORY      ?= the-conn
-IMAGE_NAME      ?= tube
-TAG             ?= latest
-FULL_IMAGE_NAME := $(REGISTRY)/$(REPOSITORY)/$(IMAGE_NAME):$(TAG)
+# Variables
+REGISTRY         ?= quay.io
+REPOSITORY       ?= the-conn
+IMAGE_NAME       ?= tube
+TAG              ?= latest
+FULL_IMAGE_NAME  := $(REGISTRY)/$(REPOSITORY)/$(IMAGE_NAME):$(TAG)
 
 CONTAINER_ENGINE := $(shell which podman 2>/dev/null || which docker)
 
-.PHONY: all build push test clean help
+.PHONY: all build image push test lint fmt clean help
 
-all: build
+all: fmt lint test build
 
-## build: Build the multi-stage musl-based container image
+## build: Compile the binary for the local host architecture
 build:
+	@echo "Compiling $(IMAGE_NAME) for local host..."
+	cargo build --release
+
+## image: Build the multi-stage container image
+image:
 	@echo "Building $(FULL_IMAGE_NAME) using $(CONTAINER_ENGINE)..."
 	$(CONTAINER_ENGINE) build -t $(FULL_IMAGE_NAME) .
 
@@ -25,9 +31,20 @@ test:
 	@echo "Running tests..."
 	ENV=TEST cargo test
 
-## clean: Remove local image (standard container cleanup)
+## lint: Run clippy for static analysis
+lint:
+	@echo "Running clippy..."
+	cargo clippy -- -D warnings
+
+## fmt: Check code formatting
+fmt:
+	@echo "Checking format..."
+	cargo +nightly fmt
+
+## clean: Remove build artifacts and local container images
 clean:
-	@echo "Removing local image $(FULL_IMAGE_NAME)..."
+	@echo "Cleaning up..."
+	cargo clean
 	$(CONTAINER_ENGINE) rmi $(FULL_IMAGE_NAME) || true
 
 ## help: Show this help message

@@ -42,10 +42,11 @@ pub async fn execute_script(config: &TubeConfig) -> Result<i32, ExecutionError> 
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use std::io::Write;
-  use std::os::unix::fs::PermissionsExt;
+  use std::{io::Write, os::unix::fs::PermissionsExt};
+
   use tempfile::{NamedTempFile, TempDir};
+
+  use super::*;
 
   // Returns a TempPath (fd closed) so the file is executable without ETXTBSY.
   fn make_script(content: &str) -> tempfile::TempPath {
@@ -82,7 +83,10 @@ mod tests {
     // Using a script file adds an extra sh layer, producing exit 137 instead of a signal.
     let workspace = TempDir::new().unwrap();
     let config = config_with_script("kill -9 $$", workspace.path().to_str().unwrap());
-    assert!(matches!(execute_script(&config).await, Err(ExecutionError::Signal(9))));
+    assert!(matches!(
+      execute_script(&config).await,
+      Err(ExecutionError::Signal(9))
+    ));
   }
 
   #[tokio::test]
@@ -90,6 +94,9 @@ mod tests {
     // spawn() fails with ENOENT when current_dir doesn't exist, triggering ExecutionError::Execution
     let script = make_script("exit 0");
     let config = config_with_script(script.to_str().unwrap(), "/nonexistent/workspace/dir");
-    assert!(matches!(execute_script(&config).await, Err(ExecutionError::Execution(_))));
+    assert!(matches!(
+      execute_script(&config).await,
+      Err(ExecutionError::Execution(_))
+    ));
   }
 }

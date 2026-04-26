@@ -83,7 +83,7 @@ impl TubeConfig {
       ));
     }
 
-    return Ok(tc);
+    Ok(tc)
   }
 
   pub fn get_url(&self) -> &str {
@@ -137,7 +137,9 @@ impl TubeConfig {
         node_name: node_name.into(),
         user_script_path: user_script_path.into(),
       },
-      log: LogConfig { level: "info".into() },
+      log: LogConfig {
+        level: "info".into(),
+      },
       workspace: WorkspaceConfig {
         get_url: get_url.into(),
         dir: workspace_dir.into(),
@@ -148,8 +150,9 @@ impl TubeConfig {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
   use serial_test::serial;
+
+  use super::*;
 
   struct EnvVarGuard {
     key: String,
@@ -160,9 +163,11 @@ mod tests {
     fn set(key: &str, val: &str) -> Self {
       let original = env::var(key).ok();
       unsafe { env::set_var(key, val) };
-      EnvVarGuard { key: key.to_string(), original }
+      EnvVarGuard {
+        key: key.to_string(),
+        original,
+      }
     }
-
   }
 
   impl Drop for EnvVarGuard {
@@ -207,7 +212,9 @@ mod tests {
     let _env = EnvVarGuard::set("ENV", "test");
     let _g = EnvVarGuard::set("TUBE__EXECUTION__NODE_NAME", "");
     let result = TubeConfig::load();
-    assert!(matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("NODE_NAME")));
+    assert!(
+      matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("NODE_NAME"))
+    );
   }
 
   #[test]

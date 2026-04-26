@@ -76,7 +76,7 @@ pub async fn write_finished_update(
     run_id: config.run_id().to_string(),
     node_name: config.node_name().to_string(),
     state: State::Finished,
-    started_at: started_at,
+    started_at,
     finished_at: Some(now),
     success: Some(success),
   };
@@ -108,7 +108,11 @@ mod tests {
   #[test]
   fn test_time_millis_is_reasonable() {
     let t = time_millis().unwrap();
-    assert!(t > 1_700_000_000_000, "time_millis returned unreasonably small value: {}", t);
+    assert!(
+      t > 1_700_000_000_000,
+      "time_millis returned unreasonably small value: {}",
+      t
+    );
   }
 
   #[test]

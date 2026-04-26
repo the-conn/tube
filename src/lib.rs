@@ -18,7 +18,10 @@ pub enum TubeError {
   Status(#[from] crate::status_update::StatusError),
 }
 
-pub async fn run(config: tube_config::TubeConfig, client: reqwest::Client) -> Result<(), TubeError> {
+pub async fn run(
+  config: tube_config::TubeConfig,
+  client: reqwest::Client,
+) -> Result<(), TubeError> {
   let _ = tracing_subscriber::fmt()
     .with_max_level(config.log_level())
     .try_init();
@@ -34,7 +37,7 @@ pub async fn run(config: tube_config::TubeConfig, client: reqwest::Client) -> Re
   .await;
 
   match run_result {
-    Ok(exit_code) if exit_code == 0 => {
+    Ok(0) => {
       info!("Node execution successful");
       status_update::write_finished_update(&client, &config, started_at, true).await?;
     }

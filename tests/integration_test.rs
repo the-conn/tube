@@ -1,13 +1,10 @@
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
+use std::{io::Write, os::unix::fs::PermissionsExt};
 
+use flate2::{Compression, write::GzEncoder};
 use serde_json::Value;
 use tempfile::{NamedTempFile, TempDir};
-use wiremock::matchers::method;
-use wiremock::{Mock, MockServer, ResponseTemplate};
-
-use tube::TubeError;
-use tube::tube_config::TubeConfig;
+use tube::{TubeError, tube_config::TubeConfig};
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
 fn make_script(content: &str) -> tempfile::TempPath {
   let mut f = NamedTempFile::new().unwrap();
@@ -48,7 +45,10 @@ async fn test_full_pipeline_success_no_workspace() {
   assert!(result.is_ok(), "run() failed: {:?}", result);
 
   let requests = server.received_requests().await.unwrap();
-  let put_requests: Vec<_> = requests.iter().filter(|r| r.method == wiremock::http::Method::PUT).collect();
+  let put_requests: Vec<_> = requests
+    .iter()
+    .filter(|r| r.method == wiremock::http::Method::PUT)
+    .collect();
   assert_eq!(put_requests.len(), 2);
 
   let second_put_body: Value = serde_json::from_slice(&put_requests[1].body).unwrap();
@@ -61,17 +61,72 @@ async fn test_full_pipeline_success_no_workspace() {
 async fn test_full_pipeline_with_workspace() {
   let server = MockServer::start().await;
 
-  // Build tar.zst fixture in memory using existing production deps
   let mut archive_data: Vec<u8> = Vec::new();
   {
-    let encoder = zstd::Encoder::new(&mut archive_data, 0).unwrap();
+    let encoder = GzEncoder::new(&mut archive_data, Compression::default());
     let mut builder = tar::Builder::new(encoder);
     let content = b"hello world";
     let mut header = tar::Header::new_gnu();
     header.set_size(content.len() as u64);
     header.set_mode(0o644);
     header.set_cksum();
-    builder.append_data(&mut header, "hello.txt", content.as_ref()).unwrap();
+    builder
+      .append_data(&mut header, "hello.txt", content.as_ref())
+      .unwrap();
+    builder.into_inner().unwrap().finish().unwrap();
+  }
+
+  Mock::given(method("GET"))
+    .respond_with(ResponseTemplate::new(200).set_body_bytes(archive_data))
+    .expect(1)
+    .mount(&server)
+    .await;
+  Mock::given(method("PUT"))
+    .respond_with(ResponseTemplate::new(200))
+    .expect(2)
+    .mount(&server)
+    .await;
+  Mock::given(method("POST"))
+    .respond_with(ResponseTemplate::new(200))
+    .expect(1)
+    .mount(&server)
+    .await;
+
+  let script = make_script("exit 0");
+  let workspace = TempDir::new().unwrap();
+  let config = TubeConfig::new_for_test(
+    &format!("{}/status", server.uri()),
+    &format!("{}/poke", server.uri()),
+    &format!("{}/archive.tar.gz", server.uri()),
+    workspace.path().to_str().unwrap(),
+    "run-2",
+    "node-1",
+    script.to_str().unwrap(),
+  );
+
+  let result = tube::run(config, reqwest::Client::new()).await;
+  assert!(result.is_ok(), "run() failed: {:?}", result);
+
+  let extracted = std::fs::read_to_string(workspace.path().join("hello.txt")).unwrap();
+  assert_eq!(extracted, "hello world");
+}
+
+#[tokio::test]
+async fn test_full_pipeline_with_zstd_workspace() {
+  let server = MockServer::start().await;
+
+  let mut archive_data: Vec<u8> = Vec::new();
+  {
+    let encoder = zstd::Encoder::new(&mut archive_data, 0).unwrap();
+    let mut builder = tar::Builder::new(encoder);
+    let content = b"hello from zstd";
+    let mut header = tar::Header::new_gnu();
+    header.set_size(content.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder
+      .append_data(&mut header, "hello.txt", content.as_ref())
+      .unwrap();
     let encoder = builder.into_inner().unwrap();
     encoder.finish().unwrap();
   }
@@ -97,9 +152,9 @@ async fn test_full_pipeline_with_workspace() {
   let config = TubeConfig::new_for_test(
     &format!("{}/status", server.uri()),
     &format!("{}/poke", server.uri()),
-    &format!("{}/archive", server.uri()),
+    &format!("{}/archive.tar.zst", server.uri()),
     workspace.path().to_str().unwrap(),
-    "run-2",
+    "run-zst",
     "node-1",
     script.to_str().unwrap(),
   );
@@ -108,7 +163,7 @@ async fn test_full_pipeline_with_workspace() {
   assert!(result.is_ok(), "run() failed: {:?}", result);
 
   let extracted = std::fs::read_to_string(workspace.path().join("hello.txt")).unwrap();
-  assert_eq!(extracted, "hello world");
+  assert_eq!(extracted, "hello from zstd");
 }
 
 #[tokio::test]
@@ -139,10 +194,17 @@ async fn test_script_failure_writes_success_false() {
   );
 
   let result = tube::run(config, reqwest::Client::new()).await;
-  assert!(result.is_ok(), "run() should swallow script exit code, got: {:?}", result);
+  assert!(
+    result.is_ok(),
+    "run() should swallow script exit code, got: {:?}",
+    result
+  );
 
   let requests = server.received_requests().await.unwrap();
-  let put_requests: Vec<_> = requests.iter().filter(|r| r.method == wiremock::http::Method::PUT).collect();
+  let put_requests: Vec<_> = requests
+    .iter()
+    .filter(|r| r.method == wiremock::http::Method::PUT)
+    .collect();
   let second_put_body: Value = serde_json::from_slice(&put_requests[1].body).unwrap();
   assert_eq!(second_put_body["success"], false);
 }
@@ -153,7 +215,7 @@ async fn test_corrupt_archive_reports_failure() {
   let server = MockServer::start().await;
 
   Mock::given(method("GET"))
-    .respond_with(ResponseTemplate::new(200).set_body_bytes(b"not valid zstd".to_vec()))
+    .respond_with(ResponseTemplate::new(200).set_body_bytes(b"not valid gzip".to_vec()))
     .expect(1)
     .mount(&server)
     .await;
@@ -181,14 +243,28 @@ async fn test_corrupt_archive_reports_failure() {
   );
 
   let result = tube::run(config, reqwest::Client::new()).await;
-  assert!(result.is_ok(), "run() should return Ok after reporting workspace error, got: {:?}", result);
+  assert!(
+    result.is_ok(),
+    "run() should return Ok after reporting workspace error, got: {:?}",
+    result
+  );
 
   let requests = server.received_requests().await.unwrap();
-  let put_requests: Vec<_> = requests.iter().filter(|r| r.method == wiremock::http::Method::PUT).collect();
-  assert_eq!(put_requests.len(), 2, "expected 2 PUT requests (started + finished)");
+  let put_requests: Vec<_> = requests
+    .iter()
+    .filter(|r| r.method == wiremock::http::Method::PUT)
+    .collect();
+  assert_eq!(
+    put_requests.len(),
+    2,
+    "expected 2 PUT requests (started + finished)"
+  );
 
   let second_put_body: Value = serde_json::from_slice(&put_requests[1].body).unwrap();
-  assert_eq!(second_put_body["success"], false, "expected success=false for corrupt archive");
+  assert_eq!(
+    second_put_body["success"], false,
+    "expected success=false for corrupt archive"
+  );
 }
 
 #[tokio::test]
@@ -227,34 +303,38 @@ async fn test_workspace_preserves_file_permissions() {
 
   let mut archive_data: Vec<u8> = Vec::new();
   {
-    let encoder = zstd::Encoder::new(&mut archive_data, 0).unwrap();
+    let encoder = GzEncoder::new(&mut archive_data, Compression::default());
     let mut builder = tar::Builder::new(encoder);
     let content = b"#!/bin/sh\nexit 0";
     let mut header = tar::Header::new_gnu();
     header.set_size(content.len() as u64);
     header.set_mode(0o755);
     header.set_cksum();
-    builder.append_data(&mut header, "script.sh", content.as_ref()).unwrap();
-    let encoder = builder.into_inner().unwrap();
-    encoder.finish().unwrap();
+    builder
+      .append_data(&mut header, "script.sh", content.as_ref())
+      .unwrap();
+    builder.into_inner().unwrap().finish().unwrap();
   }
 
   Mock::given(method("GET"))
     .respond_with(ResponseTemplate::new(200).set_body_bytes(archive_data))
-    .mount(&server).await;
+    .mount(&server)
+    .await;
   Mock::given(method("PUT"))
     .respond_with(ResponseTemplate::new(200))
-    .mount(&server).await;
+    .mount(&server)
+    .await;
   Mock::given(method("POST"))
     .respond_with(ResponseTemplate::new(200))
-    .mount(&server).await;
+    .mount(&server)
+    .await;
 
   let script = make_script("exit 0");
   let workspace = TempDir::new().unwrap();
   let config = TubeConfig::new_for_test(
     &format!("{}/status", server.uri()),
     &format!("{}/poke", server.uri()),
-    &format!("{}/archive", server.uri()),
+    &format!("{}/archive.tar.gz", server.uri()),
     workspace.path().to_str().unwrap(),
     "run-perms",
     "node-1",
@@ -264,6 +344,12 @@ async fn test_workspace_preserves_file_permissions() {
   tube::run(config, reqwest::Client::new()).await.unwrap();
 
   let mode = std::fs::metadata(workspace.path().join("script.sh"))
-    .unwrap().permissions().mode();
-  assert_eq!(mode & 0o777, 0o755, "extracted file should preserve 0o755 permissions");
+    .unwrap()
+    .permissions()
+    .mode();
+  assert_eq!(
+    mode & 0o777,
+    0o755,
+    "extracted file should preserve 0o755 permissions"
+  );
 }

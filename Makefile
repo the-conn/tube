@@ -6,7 +6,7 @@ FULL_IMAGE_NAME := $(REGISTRY)/$(REPOSITORY)/$(IMAGE_NAME):$(TAG)
 
 CONTAINER_ENGINE := $(shell which podman 2>/dev/null || which docker)
 
-.PHONY: all build push clean help
+.PHONY: all build push test clean help
 
 all: build
 
@@ -19,6 +19,11 @@ build:
 push:
 	@echo "Pushing $(FULL_IMAGE_NAME) to registry..."
 	$(CONTAINER_ENGINE) push $(FULL_IMAGE_NAME)
+
+## test: Run all unit and integration tests
+test:
+	@echo "Running tests..."
+	ENV=TEST cargo test
 
 ## clean: Remove local image (standard container cleanup)
 clean:

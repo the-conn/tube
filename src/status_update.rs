@@ -3,6 +3,7 @@ use std::time::{SystemTime, SystemTimeError};
 use reqwest::Client;
 use serde::Serialize;
 use thiserror::Error;
+use tracing::warn;
 
 use crate::tube_config::TubeConfig;
 
@@ -56,7 +57,7 @@ pub async fn write_started_update(
   };
 
   client
-    .put(config.put_url())
+    .put(config.status_put_url())
     .json(&update)
     .send()
     .await?
@@ -82,13 +83,27 @@ pub async fn write_finished_update(
   };
 
   client
-    .put(config.put_url())
+    .put(config.status_put_url())
     .json(&update)
     .send()
     .await?
     .error_for_status()?;
 
   Ok(())
+}
+
+pub async fn upload_logs(client: &Client, url: &str, logs: Vec<u8>) {
+  let result = client
+    .put(url)
+    .header(reqwest::header::CONTENT_TYPE, "text/plain")
+    .body(logs)
+    .send()
+    .await
+    .and_then(|r| r.error_for_status());
+
+  if let Err(e) = result {
+    warn!("Failed to upload execution logs: {}", e);
+  }
 }
 
 pub async fn poke_backend(config: &TubeConfig, client: &Client) -> Result<(), StatusError> {
@@ -125,5 +140,11 @@ mod tests {
     if let Err(e) = result {
       let _err: StatusError = e.into();
     }
+  }
+
+  #[tokio::test]
+  async fn test_upload_logs_failure_is_swallowed() {
+    let client = Client::new();
+    upload_logs(&client, "http://127.0.0.1:1/logs", b"test data".to_vec()).await;
   }
 }

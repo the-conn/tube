@@ -15,11 +15,13 @@ pub enum TubeConfigError {
 
 #[derive(Debug, Deserialize)]
 struct ExecutionConfig {
-  put_url: String,
+  status_put_url: String,
   poke_url: String,
   run_id: String,
   node_name: String,
   user_script_path: String,
+  log_level: String,
+  logs_put_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,9 +59,9 @@ impl TubeConfig {
         "TUBE__EXECUTION__USER_SCRIPT_PATH".into(),
       ));
     }
-    if tc.execution.put_url.is_empty() {
+    if tc.execution.status_put_url.is_empty() {
       return Err(TubeConfigError::RequiredField(
-        "TUBE__EXECUTION__PUT_URL".into(),
+        "TUBE__EXECUTION__STATUS_PUT_URL".into(),
       ));
     }
     if tc.execution.poke_url.is_empty() {
@@ -77,6 +79,11 @@ impl TubeConfig {
         "TUBE__EXECUTION__NODE_NAME".into(),
       ));
     }
+    if tc.execution.logs_put_url.is_empty() {
+      return Err(TubeConfigError::RequiredField(
+        "TUBE__EXECUTION__LOGS_PUT_URL".into(),
+      ));
+    }
     if tc.workspace.dir.is_empty() {
       return Err(TubeConfigError::RequiredField(
         "TUBE__WORKSPACE__DIR".into(),
@@ -90,8 +97,8 @@ impl TubeConfig {
     &self.workspace.get_url
   }
 
-  pub fn put_url(&self) -> &str {
-    &self.execution.put_url
+  pub fn status_put_url(&self) -> &str {
+    &self.execution.status_put_url
   }
 
   pub fn poke_url(&self) -> &str {
@@ -107,7 +114,15 @@ impl TubeConfig {
   }
 
   pub fn log_level(&self) -> Level {
-    self.log.level.parse().unwrap_or(Level::INFO)
+    self.log.level.parse().unwrap_or(Level::WARN)
+  }
+
+  pub fn execution_log_level(&self) -> Level {
+    self.execution.log_level.parse().unwrap_or(Level::INFO)
+  }
+
+  pub fn logs_put_url(&self) -> &str {
+    &self.execution.logs_put_url
   }
 
   pub fn workspace_dir(&self) -> &str {
@@ -116,35 +131,6 @@ impl TubeConfig {
 
   pub fn script_path(&self) -> &str {
     &self.execution.user_script_path
-  }
-}
-
-impl TubeConfig {
-  pub fn new_for_test(
-    put_url: &str,
-    poke_url: &str,
-    get_url: &str,
-    workspace_dir: &str,
-    run_id: &str,
-    node_name: &str,
-    user_script_path: &str,
-  ) -> Self {
-    TubeConfig {
-      execution: ExecutionConfig {
-        put_url: put_url.into(),
-        poke_url: poke_url.into(),
-        run_id: run_id.into(),
-        node_name: node_name.into(),
-        user_script_path: user_script_path.into(),
-      },
-      log: LogConfig {
-        level: "info".into(),
-      },
-      workspace: WorkspaceConfig {
-        get_url: get_url.into(),
-        dir: workspace_dir.into(),
-      },
-    }
   }
 }
 
@@ -182,16 +168,16 @@ mod tests {
   #[test]
   #[serial]
   fn test_missing_put_url() {
-    let _env = EnvVarGuard::set("ENV", "test");
-    let _g = EnvVarGuard::set("TUBE__EXECUTION__PUT_URL", "");
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__STATUS_PUT_URL", "");
     let result = TubeConfig::load();
-    assert!(matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("PUT_URL")));
+    assert!(
+      matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("STATUS_PUT_URL"))
+    );
   }
 
   #[test]
   #[serial]
   fn test_missing_poke_url() {
-    let _env = EnvVarGuard::set("ENV", "test");
     let _g = EnvVarGuard::set("TUBE__EXECUTION__POKE_URL", "");
     let result = TubeConfig::load();
     assert!(matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("POKE_URL")));
@@ -200,7 +186,6 @@ mod tests {
   #[test]
   #[serial]
   fn test_missing_run_id() {
-    let _env = EnvVarGuard::set("ENV", "test");
     let _g = EnvVarGuard::set("TUBE__EXECUTION__RUN_ID", "");
     let result = TubeConfig::load();
     assert!(matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("RUN_ID")));
@@ -209,7 +194,6 @@ mod tests {
   #[test]
   #[serial]
   fn test_missing_node_name() {
-    let _env = EnvVarGuard::set("ENV", "test");
     let _g = EnvVarGuard::set("TUBE__EXECUTION__NODE_NAME", "");
     let result = TubeConfig::load();
     assert!(
@@ -220,7 +204,6 @@ mod tests {
   #[test]
   #[serial]
   fn test_missing_user_script_path() {
-    let _env = EnvVarGuard::set("ENV", "test");
     let _g = EnvVarGuard::set("TUBE__EXECUTION__USER_SCRIPT_PATH", "");
     let result = TubeConfig::load();
     assert!(
@@ -231,7 +214,6 @@ mod tests {
   #[test]
   #[serial]
   fn test_missing_workspace_dir() {
-    let _env = EnvVarGuard::set("ENV", "test");
     let _g = EnvVarGuard::set("TUBE__WORKSPACE__DIR", "");
     let result = TubeConfig::load();
     assert!(
@@ -242,15 +224,43 @@ mod tests {
   #[test]
   #[serial]
   fn test_load_succeeds_with_all_required_vars() {
-    let _env = EnvVarGuard::set("ENV", "test");
-    let result = TubeConfig::load();
-    assert!(result.is_ok());
+    assert!(TubeConfig::load().is_ok());
   }
 
   #[test]
-  fn test_log_level_invalid_falls_back_to_info() {
-    let mut config = TubeConfig::new_for_test("u", "u", "", "/tmp", "r", "n", "/s");
-    config.log.level = "bogus".into();
-    assert_eq!(config.log_level(), tracing::Level::INFO);
+  #[serial]
+  fn test_log_level_invalid_falls_back_to_warn() {
+    let _g = EnvVarGuard::set("TUBE__LOG__LEVEL", "bogus");
+    let config = TubeConfig::load().unwrap();
+    assert_eq!(config.log_level(), tracing::Level::WARN);
+  }
+
+  #[test]
+  #[serial]
+  fn test_execution_log_level_invalid_falls_back_to_info() {
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__LOG_LEVEL", "bogus");
+    let config = TubeConfig::load().unwrap();
+    assert_eq!(config.execution_log_level(), tracing::Level::INFO);
+  }
+
+  #[test]
+  #[serial]
+  fn test_missing_logs_put_url() {
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__LOGS_PUT_URL", "");
+    let result = TubeConfig::load();
+    assert!(
+      matches!(result, Err(TubeConfigError::RequiredField(ref s)) if s.contains("LOGS_PUT_URL"))
+    );
+  }
+
+  #[test]
+  #[serial]
+  fn test_logs_put_url_returns_configured_value() {
+    let _g = EnvVarGuard::set(
+      "TUBE__EXECUTION__LOGS_PUT_URL",
+      "https://s3.example.com/logs",
+    );
+    let config = TubeConfig::load().unwrap();
+    assert_eq!(config.logs_put_url(), "https://s3.example.com/logs");
   }
 }

@@ -1,3 +1,5 @@
+use std::io::BufReader;
+
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use tar::Archive;
@@ -17,6 +19,9 @@ pub enum WorksapceError {
 
   #[error("Archive or Decompression IO failed: {0}")]
   Io(#[from] std::io::Error),
+
+  #[error("S3 download failed with status {0}: {1}")]
+  S3(String, String),
 }
 
 enum ArchiveFormat {
@@ -41,8 +46,16 @@ pub async fn create_workspace(config: &TubeConfig) -> Result<(), WorksapceError>
 
   info!("Streaming repo archive from S3...");
   let format = detect_format(config.get_url());
-  let stream = reqwest::get(config.get_url())
-    .await?
+  let response = reqwest::get(config.get_url()).await?;
+  if !response.status().is_success() {
+    let status = response.status();
+    let body = response
+      .text()
+      .await
+      .unwrap_or_else(|_| "Could not read error body".to_string());
+    return Err(WorksapceError::S3(status.as_str().to_string(), body));
+  }
+  let stream = response
     .bytes_stream()
     .map(|res| res.map_err(std::io::Error::other));
   let async_reader = StreamReader::new(stream);
@@ -53,11 +66,11 @@ pub async fn create_workspace(config: &TubeConfig) -> Result<(), WorksapceError>
   tokio::task::spawn_blocking(move || match format {
     ArchiveFormat::Gzip => {
       let decoder = GzDecoder::new(sync_reader);
-      Archive::new(decoder).unpack(workspace_dir)
+      Archive::new(BufReader::new(decoder)).unpack(workspace_dir)
     }
     ArchiveFormat::Zstd => {
       let decoder = zstd::Decoder::new(sync_reader)?;
-      Archive::new(decoder).unpack(workspace_dir)
+      Archive::new(BufReader::new(decoder)).unpack(workspace_dir)
     }
   })
   .await??;
@@ -68,22 +81,21 @@ pub async fn create_workspace(config: &TubeConfig) -> Result<(), WorksapceError>
 
 #[cfg(test)]
 mod tests {
+  use std::env;
+
+  use serial_test::serial;
   use tempfile::TempDir;
 
   use super::*;
 
   #[tokio::test]
+  #[serial]
   async fn test_empty_get_url_skips_download() {
     let workspace = TempDir::new().unwrap();
-    let config = TubeConfig::new_for_test(
-      "u",
-      "u",
-      "",
-      workspace.path().to_str().unwrap(),
-      "r",
-      "n",
-      "/s",
-    );
+    unsafe {
+      env::set_var("TUBE__WORKSPACE__DIR", workspace.path().to_str().unwrap());
+    }
+    let config = TubeConfig::load().unwrap();
     assert!(create_workspace(&config).await.is_ok());
   }
 

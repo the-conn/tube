@@ -5,6 +5,7 @@ pub mod workspace;
 
 use thiserror::Error;
 use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Error, Debug)]
 pub enum TubeError {
@@ -22,35 +23,42 @@ pub async fn run(
   config: tube_config::TubeConfig,
   client: reqwest::Client,
 ) -> Result<(), TubeError> {
-  let _ = tracing_subscriber::fmt()
-    .with_max_level(config.log_level())
-    .try_init();
+  let system_level = config.log_level();
+  let user_level = config.execution_log_level();
+  let filter = EnvFilter::new(format!("off,tube={system_level},user_logs={user_level}"));
+  let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
   info!("Starting node execution");
   let started_at = status_update::write_started_update(&client, &config).await?;
-  let run_result: Result<i32, TubeError> = async {
-    workspace::create_workspace(&config).await?;
-    execution::execute_script(&config)
-      .await
-      .map_err(TubeError::Execution)
-  }
-  .await;
 
-  match run_result {
-    Ok(0) => {
+  let (success, log_buffer) = match run_workspace_and_script(&config).await {
+    Ok((0, buf)) => {
       info!("Node execution successful");
-      status_update::write_finished_update(&client, &config, started_at, true).await?;
+      (true, buf)
     }
-    Ok(exit_code) => {
-      info!("Node execution failed with exit code: {}", exit_code);
-      status_update::write_finished_update(&client, &config, started_at, false).await?;
+    Ok((code, buf)) => {
+      info!("Node execution failed with exit code: {}", code);
+      (false, buf)
     }
     Err(e) => {
       error!("System error during execution: {}", e);
-      status_update::write_finished_update(&client, &config, started_at, false).await?;
+      (false, Vec::new())
     }
-  }
+  };
+
+  status_update::upload_logs(&client, config.logs_put_url(), log_buffer).await;
+
+  status_update::write_finished_update(&client, &config, started_at, success).await?;
   status_update::poke_backend(&config, &client).await?;
 
   Ok(())
+}
+
+async fn run_workspace_and_script(
+  config: &tube_config::TubeConfig,
+) -> Result<(i32, Vec<u8>), TubeError> {
+  workspace::create_workspace(config).await?;
+  execution::execute_script(config)
+    .await
+    .map_err(TubeError::Execution)
 }

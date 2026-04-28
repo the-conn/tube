@@ -1,12 +1,14 @@
 [execution]
 user_script_path = "/tmp/user_script.sh"
-put_url = ""
+status_put_url = ""
 poke_url = ""
 run_id = ""
 node_name = ""
+log_level = "info"
+logs_put_url = ""
 
 [log]
-level = "info"
+level = "warn"
 
 [workspace]
 get_url = ""

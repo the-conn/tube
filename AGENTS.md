@@ -23,5 +23,5 @@ This document provides mandatory instructions for all AI-assisted development on
 * **Documentation**: Update the `README.md` if changes affect the configuration, lifecycle, or deployment.
 
 ### 4. Technical Constraints
-* **Error Handling**: Adhere to established unified error enum patterns.
+* **Error Handling**: Adhere to established unified error enum patterns. Never use `unwrap` or `expect` in production code; all fallible operations must propagate errors through the appropriate error enum variant.
 * **Performance**: Prioritize streaming and zero-copy operations for IO and network tasks.

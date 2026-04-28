@@ -1,4 +1,7 @@
-use std::io::BufReader;
+use std::{
+  io::{BufReader, Read},
+  path::{Path, PathBuf},
+};
 
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
@@ -38,6 +41,27 @@ fn detect_format(url: &str) -> ArchiveFormat {
   }
 }
 
+// Archives from the backend always wrap contents in a top-level directory named
+// after the repo + commit (e.g. "the-conn-jefferies-e646b86/"). Strip that prefix
+// so files land directly in the workspace rather than a subdirectory.
+fn unpack_strip_root<R: Read>(archive: &mut Archive<R>, dest: &str) -> std::io::Result<()> {
+  let dest = Path::new(dest);
+  for entry in archive.entries()? {
+    let mut entry = entry?;
+    let path = entry.path()?.into_owned();
+    let stripped: PathBuf = path.components().skip(1).collect();
+    if stripped.as_os_str().is_empty() {
+      continue;
+    }
+    let target = dest.join(stripped);
+    if let Some(parent) = target.parent() {
+      std::fs::create_dir_all(parent)?;
+    }
+    entry.unpack(target)?;
+  }
+  Ok(())
+}
+
 pub async fn create_workspace(config: &TubeConfig) -> Result<(), WorksapceError> {
   if config.get_url().is_empty() {
     info!("No get_url provided, skipping repo cloning");
@@ -66,11 +90,11 @@ pub async fn create_workspace(config: &TubeConfig) -> Result<(), WorksapceError>
   tokio::task::spawn_blocking(move || match format {
     ArchiveFormat::Gzip => {
       let decoder = GzDecoder::new(sync_reader);
-      Archive::new(BufReader::new(decoder)).unpack(workspace_dir)
+      unpack_strip_root(&mut Archive::new(BufReader::new(decoder)), &workspace_dir)
     }
     ArchiveFormat::Zstd => {
       let decoder = zstd::Decoder::new(sync_reader)?;
-      Archive::new(BufReader::new(decoder)).unpack(workspace_dir)
+      unpack_strip_root(&mut Archive::new(BufReader::new(decoder)), &workspace_dir)
     }
   })
   .await??;
@@ -97,6 +121,29 @@ mod tests {
     }
     let config = TubeConfig::load().unwrap();
     assert!(create_workspace(&config).await.is_ok());
+  }
+
+  #[test]
+  fn test_unpack_strip_root_flattens_top_level_dir() {
+    use std::io::Cursor;
+
+    let mut builder = tar::Builder::new(Vec::new());
+    let content = b"hello";
+    let mut header = tar::Header::new_gnu();
+    header.set_size(content.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder
+      .append_data(&mut header, "repo-abc123/src/main.rs", content.as_ref())
+      .unwrap();
+    let tar_bytes = builder.into_inner().unwrap();
+
+    let dest = TempDir::new().unwrap();
+    let mut archive = Archive::new(Cursor::new(tar_bytes));
+    unpack_strip_root(&mut archive, dest.path().to_str().unwrap()).unwrap();
+
+    assert!(dest.path().join("src/main.rs").exists());
+    assert!(!dest.path().join("repo-abc123").exists());
   }
 
   #[test]

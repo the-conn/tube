@@ -136,7 +136,7 @@ async fn test_full_pipeline_with_workspace() {
     header.set_mode(0o644);
     header.set_cksum();
     builder
-      .append_data(&mut header, "hello.txt", content.as_ref())
+      .append_data(&mut header, "repo-abc123/hello.txt", content.as_ref())
       .unwrap();
     builder.into_inner().unwrap().finish().unwrap();
   }
@@ -188,7 +188,7 @@ async fn test_full_pipeline_with_zstd_workspace() {
     header.set_mode(0o644);
     header.set_cksum();
     builder
-      .append_data(&mut header, "hello.txt", content.as_ref())
+      .append_data(&mut header, "repo-abc123/hello.txt", content.as_ref())
       .unwrap();
     let encoder = builder.into_inner().unwrap();
     encoder.finish().unwrap();
@@ -379,7 +379,7 @@ async fn test_workspace_preserves_file_permissions() {
     header.set_mode(0o755);
     header.set_cksum();
     builder
-      .append_data(&mut header, "script.sh", content.as_ref())
+      .append_data(&mut header, "repo-abc123/script.sh", content.as_ref())
       .unwrap();
     builder.into_inner().unwrap().finish().unwrap();
   }

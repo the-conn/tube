@@ -17,6 +17,8 @@ pub enum TubeError {
   Execution(#[from] crate::execution::ExecutionError),
   #[error("Status reporting error: {0}")]
   Status(#[from] crate::status_update::StatusError),
+  #[error("Reqwest error: {0}")]
+  Reqwest(#[from] reqwest::Error),
 }
 
 pub async fn run(
@@ -31,7 +33,7 @@ pub async fn run(
   info!("Starting node execution");
   let started_at = status_update::write_started_update(&client, &config).await?;
 
-  let (success, log_buffer) = match run_workspace_and_script(&config).await {
+  let (success, log_buffer) = match run_workspace_and_script(&config, &client).await {
     Ok((0, buf)) => {
       info!("Node execution successful");
       (true, buf)
@@ -56,8 +58,9 @@ pub async fn run(
 
 async fn run_workspace_and_script(
   config: &tube_config::TubeConfig,
+  client: &reqwest::Client,
 ) -> Result<(i32, Vec<u8>), TubeError> {
-  workspace::create_workspace(config).await?;
+  workspace::create_workspace(config, client).await?;
   execution::execute_script(config)
     .await
     .map_err(TubeError::Execution)

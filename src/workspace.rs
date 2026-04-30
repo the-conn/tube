@@ -62,7 +62,10 @@ fn unpack_strip_root<R: Read>(archive: &mut Archive<R>, dest: &str) -> std::io::
   Ok(())
 }
 
-pub async fn create_workspace(config: &TubeConfig) -> Result<(), WorksapceError> {
+pub async fn create_workspace(
+  config: &TubeConfig,
+  client: &reqwest::Client,
+) -> Result<(), WorksapceError> {
   if config.get_url().is_empty() {
     info!("No get_url provided, skipping repo cloning");
     return Ok(());
@@ -70,7 +73,7 @@ pub async fn create_workspace(config: &TubeConfig) -> Result<(), WorksapceError>
 
   info!("Streaming repo archive from S3...");
   let format = detect_format(config.get_url());
-  let response = reqwest::get(config.get_url()).await?;
+  let response = client.get(config.get_url()).send().await?;
   if !response.status().is_success() {
     let status = response.status();
     let body = response
@@ -120,7 +123,8 @@ mod tests {
       env::set_var("TUBE__WORKSPACE__DIR", workspace.path().to_str().unwrap());
     }
     let config = TubeConfig::load().unwrap();
-    assert!(create_workspace(&config).await.is_ok());
+    let client = reqwest::Client::new();
+    assert!(create_workspace(&config, &client).await.is_ok());
   }
 
   #[test]

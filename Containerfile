@@ -1,4 +1,5 @@
-FROM rust:1.95-slim as builder
+ARG RUST_TAG=1.95-slim
+FROM rust:${RUST_TAG} as builder
 
 RUN apt-get update && apt-get install -y musl-tools musl-dev
 RUN rustup target add x86_64-unknown-linux-musl

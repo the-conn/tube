@@ -8,11 +8,10 @@ on:
 nodes:
   - name: Build Image
     type: build
-    after: ["Unit Tests"]
     checkout: true
     config:
       containerfile: Containerfile
       tags:
-        - quay.io/the-conn/jefferies
+        - quay.io/the-conn/tube
       build_args:
         - RUST_TAG=1.95-slim

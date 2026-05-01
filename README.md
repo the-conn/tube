@@ -37,6 +37,9 @@ level = "info"  # trace, debug, info, warn, error
 [workspace]
 get_url = ""    # Pre-signed S3 URL for source retrieval
 dir = "/workspace"
+
+[secrets]
+dir = "/etc/the-conn/secrets"  # Directory of secret files (one per secret)
 ```
 
 ### Environment Variable Mapping
@@ -46,6 +49,17 @@ The configuration paths map directly to environment variables using double under
 * `TUBE__EXECUTION__PUT_URL`
 * `TUBE__EXECUTION__POKE_URL`
 * `TUBE__WORKSPACE__GET_URL`
+
+## Secrets
+
+Secrets are mounted as individual files under `/etc/the-conn/secrets/` (override with `TUBE__SECRETS__DIR`). The filename is the env-var name and the file body (after trimming surrounding whitespace) is the value. For example, `/etc/the-conn/secrets/QUAY_USERNAME` and `/etc/the-conn/secrets/QUAY_PASSWORD` become `$QUAY_USERNAME` and `$QUAY_PASSWORD` in the user script's environment.
+
+Behavior:
+
+* The directory is optional. If it does not exist, `tube` runs without secrets.
+* Files whose names start with `.` (e.g. the `..data` symlink in Kubernetes secret mounts) are ignored.
+* Empty values (after trimming) are skipped.
+* Every captured stdout/stderr line is scanned and any occurrence of a secret value is replaced with `***` before the line is appended to the log buffer or emitted to tracing. The S3 log upload therefore never contains plaintext secrets, even if the user script accidentally echoes them.
 
 ## Security Model
 

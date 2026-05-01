@@ -1,4 +1,4 @@
-use std::{env, time::Duration};
+use std::{env, path::Path, time::Duration};
 
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
@@ -41,11 +41,31 @@ struct WorkspaceConfig {
   dir: String,
 }
 
+fn default_secrets_dir() -> String {
+  "/etc/the-conn/secrets".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct SecretsConfig {
+  #[serde(default = "default_secrets_dir")]
+  dir: String,
+}
+
+impl Default for SecretsConfig {
+  fn default() -> Self {
+    Self {
+      dir: default_secrets_dir(),
+    }
+  }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TubeConfig {
   execution: ExecutionConfig,
   log: LogConfig,
   workspace: WorkspaceConfig,
+  #[serde(default)]
+  secrets: SecretsConfig,
 }
 
 impl TubeConfig {
@@ -141,6 +161,10 @@ impl TubeConfig {
 
   pub fn script_path(&self) -> &str {
     &self.execution.user_script_path
+  }
+
+  pub fn secrets_dir(&self) -> &Path {
+    Path::new(&self.secrets.dir)
   }
 }
 

@@ -46,7 +46,27 @@ fn load_config(
   workspace_dir: &str,
   script_path: &str,
   logs_put_url: &str,
-) -> (TubeConfig, Vec<EnvVarGuard>) {
+) -> (TubeConfig, Vec<EnvVarGuard>, TempDir) {
+  load_config_with_secrets(
+    server,
+    get_url,
+    workspace_dir,
+    script_path,
+    logs_put_url,
+    None,
+  )
+}
+
+fn load_config_with_secrets(
+  server: &MockServer,
+  get_url: &str,
+  workspace_dir: &str,
+  script_path: &str,
+  logs_put_url: &str,
+  secrets_dir: Option<&std::path::Path>,
+) -> (TubeConfig, Vec<EnvVarGuard>, TempDir) {
+  let owned_secrets_dir = TempDir::new().unwrap();
+  let secrets_path = secrets_dir.unwrap_or(owned_secrets_dir.path());
   let guards = vec![
     EnvVarGuard::set(
       "TUBE__EXECUTION__STATUS_PUT_URL",
@@ -60,9 +80,10 @@ fn load_config(
     EnvVarGuard::set("TUBE__WORKSPACE__GET_URL", get_url),
     EnvVarGuard::set("TUBE__WORKSPACE__DIR", workspace_dir),
     EnvVarGuard::set("TUBE__EXECUTION__USER_SCRIPT_PATH", script_path),
+    EnvVarGuard::set("TUBE__SECRETS__DIR", secrets_path.to_str().unwrap()),
   ];
   let config = TubeConfig::load().unwrap();
-  (config, guards)
+  (config, guards, owned_secrets_dir)
 }
 
 #[tokio::test]
@@ -83,7 +104,7 @@ async fn test_full_pipeline_success_no_workspace() {
 
   let script = make_script("exit 0");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     "",
     workspace.path().to_str().unwrap(),
@@ -158,7 +179,7 @@ async fn test_full_pipeline_with_workspace() {
 
   let script = make_script("exit 0");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     &format!("{}/archive.tar.gz", server.uri()),
     workspace.path().to_str().unwrap(),
@@ -211,7 +232,7 @@ async fn test_full_pipeline_with_zstd_workspace() {
 
   let script = make_script("exit 0");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     &format!("{}/archive.tar.zst", server.uri()),
     workspace.path().to_str().unwrap(),
@@ -243,7 +264,7 @@ async fn test_script_failure_writes_success_false() {
 
   let script = make_script("exit 1");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     "",
     workspace.path().to_str().unwrap(),
@@ -298,7 +319,7 @@ async fn test_corrupt_archive_reports_failure() {
 
   let script = make_script("exit 0");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     &format!("{}/archive", server.uri()),
     workspace.path().to_str().unwrap(),
@@ -348,7 +369,7 @@ async fn test_status_endpoint_5xx_returns_status_error() {
 
   let script = make_script("exit 0");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     "",
     workspace.path().to_str().unwrap(),
@@ -399,7 +420,7 @@ async fn test_workspace_preserves_file_permissions() {
 
   let script = make_script("exit 0");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     &format!("{}/archive.tar.gz", server.uri()),
     workspace.path().to_str().unwrap(),
@@ -436,7 +457,7 @@ async fn test_log_upload_on_success() {
 
   let script = make_script("echo hello && echo world >&2");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     "",
     workspace.path().to_str().unwrap(),
@@ -490,7 +511,7 @@ async fn test_periodic_log_uploads_during_long_script() {
   let script = make_script("for i in 1 2 3 4 5; do echo line$i; sleep 0.2; done");
   let workspace = TempDir::new().unwrap();
   let _interval_guard = EnvVarGuard::set("TUBE__EXECUTION__LOG_UPLOAD_INTERVAL_MS", "100");
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     "",
     workspace.path().to_str().unwrap(),
@@ -554,7 +575,7 @@ async fn test_log_upload_failure_does_not_fail_run() {
 
   let script = make_script("exit 0");
   let workspace = TempDir::new().unwrap();
-  let (config, _guards) = load_config(
+  let (config, _guards, _secrets_dir) = load_config(
     &server,
     "",
     workspace.path().to_str().unwrap(),
@@ -567,4 +588,57 @@ async fn test_log_upload_failure_does_not_fail_run() {
     result.is_ok(),
     "run() should succeed even if log upload fails"
   );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_secrets_reach_script_and_are_masked_in_logs() {
+  let server = MockServer::start().await;
+
+  Mock::given(method("PUT"))
+    .respond_with(ResponseTemplate::new(200))
+    .mount(&server)
+    .await;
+  Mock::given(method("POST"))
+    .respond_with(ResponseTemplate::new(200))
+    .mount(&server)
+    .await;
+
+  let secrets_dir = TempDir::new().unwrap();
+  std::fs::write(secrets_dir.path().join("QUAY_USERNAME"), "alice\n").unwrap();
+  std::fs::write(secrets_dir.path().join("QUAY_PASSWORD"), "  topsecret  ").unwrap();
+
+  let script = make_script("echo \"login=$QUAY_USERNAME pass=$QUAY_PASSWORD\"");
+  let workspace = TempDir::new().unwrap();
+  let (config, _guards, _owned) = load_config_with_secrets(
+    &server,
+    "",
+    workspace.path().to_str().unwrap(),
+    script.to_str().unwrap(),
+    &format!("{}/logs", server.uri()),
+    Some(secrets_dir.path()),
+  );
+
+  let result = tube::run(config, reqwest::Client::new()).await;
+  assert!(result.is_ok(), "run() failed: {:?}", result);
+
+  let requests = server.received_requests().await.unwrap();
+  let log_put = requests
+    .iter()
+    .filter(|r| r.method == wiremock::http::Method::PUT)
+    .find(|r| {
+      r.headers
+        .get("content-type")
+        .map(|v| v.to_str().is_ok_and(|s| s.starts_with("text/plain")))
+        .unwrap_or(false)
+    })
+    .expect("expected a text/plain PUT for log upload");
+
+  let body = std::str::from_utf8(&log_put.body).unwrap();
+  assert!(
+    body.contains("login=*** pass=***"),
+    "expected masked login/pass, got: {body}"
+  );
+  assert!(!body.contains("alice"), "username leaked in: {body}");
+  assert!(!body.contains("topsecret"), "password leaked in: {body}");
 }

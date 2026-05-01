@@ -1,4 +1,5 @@
 pub mod execution;
+pub mod secrets;
 pub mod status_update;
 pub mod tube_config;
 pub mod workspace;
@@ -10,7 +11,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use crate::execution::LogBuffer;
+use crate::{execution::LogBuffer, secrets::Secrets};
 
 #[derive(Error, Debug)]
 pub enum TubeError {
@@ -22,6 +23,8 @@ pub enum TubeError {
   Execution(#[from] crate::execution::ExecutionError),
   #[error("Status reporting error: {0}")]
   Status(#[from] crate::status_update::StatusError),
+  #[error("Secrets error: {0}")]
+  Secrets(#[from] crate::secrets::SecretsError),
   #[error("Reqwest error: {0}")]
   Reqwest(#[from] reqwest::Error),
 }
@@ -36,9 +39,10 @@ pub async fn run(
   let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
   info!("Starting node execution");
+  let secrets = Arc::new(Secrets::load(config.secrets_dir())?);
   let started_at = status_update::write_started_update(&client, &config).await?;
 
-  let (success, log_buffer) = match run_workspace_and_script(&config, &client).await {
+  let (success, log_buffer) = match run_workspace_and_script(&config, &client, &secrets).await {
     (Ok(0), buf) => {
       info!("Node execution successful");
       (true, buf)
@@ -64,6 +68,7 @@ pub async fn run(
 async fn run_workspace_and_script(
   config: &tube_config::TubeConfig,
   client: &reqwest::Client,
+  secrets: &Arc<Secrets>,
 ) -> (Result<i32, TubeError>, Vec<u8>) {
   if let Err(e) = workspace::create_workspace(config, client).await {
     return (Err(e.into()), Vec::new());
@@ -77,7 +82,7 @@ async fn run_workspace_and_script(
     config.log_upload_interval(),
   );
 
-  let exit_code_res = execution::execute_script(config, Arc::clone(&buffer)).await;
+  let exit_code_res = execution::execute_script(config, Arc::clone(&buffer), secrets).await;
 
   uploader.abort();
   let _ = uploader.await;

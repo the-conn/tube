@@ -19,7 +19,7 @@ use tokio::{
 };
 use tracing::info;
 
-use crate::{status_update, tube_config::TubeConfig};
+use crate::{secrets::Secrets, status_update, tube_config::TubeConfig};
 
 const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
 
@@ -115,6 +115,7 @@ pub enum ExecutionError {
 pub async fn execute_script(
   config: &TubeConfig,
   buffer: Arc<Mutex<LogBuffer>>,
+  secrets: &Secrets,
 ) -> Result<i32, ExecutionError> {
   run_script(
     config.run_id().to_string(),
@@ -122,27 +123,33 @@ pub async fn execute_script(
     config.script_path().to_string(),
     config.workspace_dir().to_string(),
     buffer,
+    secrets,
   )
   .await
 }
 
-#[tracing::instrument(skip(buffer))]
+#[tracing::instrument(skip(buffer, secrets))]
 async fn run_script(
   run_id: String,
   node_name: String,
   script_path: String,
   workspace: String,
   buffer: Arc<Mutex<LogBuffer>>,
+  secrets: &Secrets,
 ) -> Result<i32, ExecutionError> {
   info!("Starting user script execution");
 
-  let mut child = Command::new("sh")
+  let mut command = Command::new("sh");
+  command
     .arg("-c")
     .arg(&script_path)
     .current_dir(Path::new(&workspace))
     .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .spawn()?;
+    .stderr(Stdio::piped());
+  for (key, value) in secrets.env() {
+    command.env(key, value);
+  }
+  let mut child = command.spawn()?;
 
   let stdout = child.stdout.take().ok_or(ExecutionError::Pipe)?;
   let stderr = child.stderr.take().ok_or(ExecutionError::Pipe)?;
@@ -161,8 +168,9 @@ async fn run_script(
       line = stdout_lines.next_line(), if !stdout_done => {
         match line? {
           Some(l) => {
-            info!(target: "user_logs", stream = "stdout", "{}", l);
-            buffer.lock().await.push("stdout", &l);
+            let masked = secrets.mask(&l);
+            info!(target: "user_logs", stream = "stdout", "{}", masked);
+            buffer.lock().await.push("stdout", &masked);
           }
           None => stdout_done = true,
         }
@@ -170,8 +178,9 @@ async fn run_script(
       line = stderr_lines.next_line(), if !stderr_done => {
         match line? {
           Some(l) => {
-            info!(target: "user_logs", stream = "stderr", "{}", l);
-            buffer.lock().await.push("stderr", &l);
+            let masked = secrets.mask(&l);
+            info!(target: "user_logs", stream = "stderr", "{}", masked);
+            buffer.lock().await.push("stderr", &masked);
           }
           None => stderr_done = true,
         }
@@ -254,7 +263,12 @@ mod tests {
     let script = make_script("exit 0");
     let workspace = TempDir::new().unwrap();
     let config = load_config(script.to_str().unwrap(), workspace.path().to_str().unwrap());
-    assert_eq!(execute_script(&config, new_buffer()).await.unwrap(), 0);
+    assert_eq!(
+      execute_script(&config, new_buffer(), &Secrets::default())
+        .await
+        .unwrap(),
+      0
+    );
   }
 
   #[tokio::test]
@@ -263,7 +277,12 @@ mod tests {
     let script = make_script("exit 42");
     let workspace = TempDir::new().unwrap();
     let config = load_config(script.to_str().unwrap(), workspace.path().to_str().unwrap());
-    assert_eq!(execute_script(&config, new_buffer()).await.unwrap(), 42);
+    assert_eq!(
+      execute_script(&config, new_buffer(), &Secrets::default())
+        .await
+        .unwrap(),
+      42
+    );
   }
 
   #[tokio::test]
@@ -272,7 +291,7 @@ mod tests {
     let workspace = TempDir::new().unwrap();
     let config = load_config("kill -9 $$", workspace.path().to_str().unwrap());
     assert!(matches!(
-      execute_script(&config, new_buffer()).await,
+      execute_script(&config, new_buffer(), &Secrets::default()).await,
       Err(ExecutionError::Signal(9))
     ));
   }
@@ -283,7 +302,7 @@ mod tests {
     let script = make_script("exit 0");
     let config = load_config(script.to_str().unwrap(), "/nonexistent/workspace/dir");
     assert!(matches!(
-      execute_script(&config, new_buffer()).await,
+      execute_script(&config, new_buffer(), &Secrets::default()).await,
       Err(ExecutionError::Execution(_))
     ));
   }
@@ -295,7 +314,9 @@ mod tests {
     let workspace = TempDir::new().unwrap();
     let config = load_config(script.to_str().unwrap(), workspace.path().to_str().unwrap());
     let buf = new_buffer();
-    let code = execute_script(&config, Arc::clone(&buf)).await.unwrap();
+    let code = execute_script(&config, Arc::clone(&buf), &Secrets::default())
+      .await
+      .unwrap();
     assert_eq!(code, 0);
     let output = String::from_utf8(drain(buf).await).unwrap();
     assert!(output.contains("hello"));
@@ -309,7 +330,9 @@ mod tests {
     let workspace = TempDir::new().unwrap();
     let config = load_config(script.to_str().unwrap(), workspace.path().to_str().unwrap());
     let buf = new_buffer();
-    let _ = execute_script(&config, Arc::clone(&buf)).await.unwrap();
+    let _ = execute_script(&config, Arc::clone(&buf), &Secrets::default())
+      .await
+      .unwrap();
     let output = String::from_utf8(drain(buf).await).unwrap();
     assert!(output.contains("err_line"));
     assert!(output.contains("[stderr]"));
@@ -324,7 +347,9 @@ mod tests {
     let workspace = TempDir::new().unwrap();
     let config = load_config(script.to_str().unwrap(), workspace.path().to_str().unwrap());
     let buf = new_buffer();
-    let _ = execute_script(&config, Arc::clone(&buf)).await.unwrap();
+    let _ = execute_script(&config, Arc::clone(&buf), &Secrets::default())
+      .await
+      .unwrap();
     let total = buf.lock().await.total_bytes();
     assert!(total <= MAX_LOG_BYTES);
   }
@@ -338,13 +363,40 @@ mod tests {
     let workspace = TempDir::new().unwrap();
     let config = load_config(script.to_str().unwrap(), workspace.path().to_str().unwrap());
     let buf = new_buffer();
-    let _ = execute_script(&config, Arc::clone(&buf)).await.unwrap();
+    let _ = execute_script(&config, Arc::clone(&buf), &Secrets::default())
+      .await
+      .unwrap();
     let total = buf.lock().await.total_bytes();
     assert!(total <= MAX_LOG_BYTES);
     let output = String::from_utf8(drain(buf).await).unwrap();
     assert!(
       output.contains("LATE_SENTINEL_zzzzzzzzzzzzzzzzzzzzzz"),
       "expected the most recent line to survive eviction"
+    );
+  }
+
+  #[tokio::test]
+  #[serial]
+  async fn test_secret_value_is_masked_and_passed_via_env() {
+    let script = make_script("echo \"token=$MY_SECRET\"");
+    let workspace = TempDir::new().unwrap();
+    let config = load_config(script.to_str().unwrap(), workspace.path().to_str().unwrap());
+    let secrets_dir = TempDir::new().unwrap();
+    std::fs::write(secrets_dir.path().join("MY_SECRET"), "p4ssw0rd\n").unwrap();
+    let secrets = Secrets::load(secrets_dir.path()).unwrap();
+    let buf = new_buffer();
+    let code = execute_script(&config, Arc::clone(&buf), &secrets)
+      .await
+      .unwrap();
+    assert_eq!(code, 0);
+    let output = String::from_utf8(drain(buf).await).unwrap();
+    assert!(
+      output.contains("token=***"),
+      "expected masked output, got: {output}"
+    );
+    assert!(
+      !output.contains("p4ssw0rd"),
+      "secret value leaked: {output}"
     );
   }
 

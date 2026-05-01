@@ -16,4 +16,4 @@ get_url = ""
 dir = "/workspace"
 
 [secrets]
-dir = "/etc/the-conn/secrets"
+dir = "/etc/tube/secrets"

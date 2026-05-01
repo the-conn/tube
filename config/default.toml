@@ -6,6 +6,7 @@ run_id = ""
 node_name = ""
 log_level = "info"
 logs_put_url = ""
+log_upload_interval_ms = 5000
 
 [log]
 level = "warn"

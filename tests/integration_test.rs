@@ -475,6 +475,71 @@ async fn test_log_upload_on_success() {
 
 #[tokio::test]
 #[serial]
+async fn test_periodic_log_uploads_during_long_script() {
+  let server = MockServer::start().await;
+
+  Mock::given(method("PUT"))
+    .respond_with(ResponseTemplate::new(200))
+    .mount(&server)
+    .await;
+  Mock::given(method("POST"))
+    .respond_with(ResponseTemplate::new(200))
+    .mount(&server)
+    .await;
+
+  let script = make_script("for i in 1 2 3 4 5; do echo line$i; sleep 0.2; done");
+  let workspace = TempDir::new().unwrap();
+  let _interval_guard = EnvVarGuard::set("TUBE__EXECUTION__LOG_UPLOAD_INTERVAL_MS", "100");
+  let (config, _guards) = load_config(
+    &server,
+    "",
+    workspace.path().to_str().unwrap(),
+    script.to_str().unwrap(),
+    &format!("{}/logs", server.uri()),
+  );
+
+  let result = tube::run(config, reqwest::Client::new()).await;
+  assert!(result.is_ok(), "run() failed: {:?}", result);
+
+  let requests = server.received_requests().await.unwrap();
+  let log_puts: Vec<_> = requests
+    .iter()
+    .filter(|r| {
+      r.method == wiremock::http::Method::PUT
+        && r
+          .headers
+          .get("content-type")
+          .map(|v| v.to_str().is_ok_and(|s| s.starts_with("text/plain")))
+          .unwrap_or(false)
+    })
+    .collect();
+
+  assert!(
+    log_puts.len() >= 2,
+    "expected at least one periodic log PUT plus the final upload, got {}",
+    log_puts.len()
+  );
+
+  let first_body_len = log_puts.first().unwrap().body.len();
+  let last_body_len = log_puts.last().unwrap().body.len();
+  assert!(
+    last_body_len > first_body_len,
+    "final log body should be larger than the first periodic upload (first={}, last={})",
+    first_body_len,
+    last_body_len
+  );
+
+  let final_body = std::str::from_utf8(&log_puts.last().unwrap().body).unwrap();
+  for i in 1..=5 {
+    assert!(
+      final_body.contains(&format!("line{i}")),
+      "final body should contain line{i}"
+    );
+  }
+}
+
+#[tokio::test]
+#[serial]
 async fn test_log_upload_failure_does_not_fail_run() {
   let server = MockServer::start().await;
 

@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, time::Duration};
 
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
@@ -13,6 +13,10 @@ pub enum TubeConfigError {
   RequiredField(String),
 }
 
+fn default_log_upload_interval_ms() -> u64 {
+  5000
+}
+
 #[derive(Debug, Deserialize)]
 struct ExecutionConfig {
   status_put_url: String,
@@ -22,6 +26,8 @@ struct ExecutionConfig {
   user_script_path: String,
   log_level: String,
   logs_put_url: String,
+  #[serde(default = "default_log_upload_interval_ms")]
+  log_upload_interval_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +131,10 @@ impl TubeConfig {
     &self.execution.logs_put_url
   }
 
+  pub fn log_upload_interval(&self) -> Duration {
+    Duration::from_millis(self.execution.log_upload_interval_ms)
+  }
+
   pub fn workspace_dir(&self) -> &str {
     &self.workspace.dir
   }
@@ -149,6 +159,15 @@ mod tests {
     fn set(key: &str, val: &str) -> Self {
       let original = env::var(key).ok();
       unsafe { env::set_var(key, val) };
+      EnvVarGuard {
+        key: key.to_string(),
+        original,
+      }
+    }
+
+    fn unset(key: &str) -> Self {
+      let original = env::var(key).ok();
+      unsafe { env::remove_var(key) };
       EnvVarGuard {
         key: key.to_string(),
         original,
@@ -262,5 +281,21 @@ mod tests {
     );
     let config = TubeConfig::load().unwrap();
     assert_eq!(config.logs_put_url(), "https://s3.example.com/logs");
+  }
+
+  #[test]
+  #[serial]
+  fn test_log_upload_interval_defaults_to_five_seconds() {
+    let _g = EnvVarGuard::unset("TUBE__EXECUTION__LOG_UPLOAD_INTERVAL_MS");
+    let config = TubeConfig::load().unwrap();
+    assert_eq!(config.log_upload_interval(), Duration::from_millis(5000));
+  }
+
+  #[test]
+  #[serial]
+  fn test_log_upload_interval_env_override() {
+    let _g = EnvVarGuard::set("TUBE__EXECUTION__LOG_UPLOAD_INTERVAL_MS", "250");
+    let config = TubeConfig::load().unwrap();
+    assert_eq!(config.log_upload_interval(), Duration::from_millis(250));
   }
 }

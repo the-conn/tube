@@ -41,6 +41,11 @@ fmt:
 	@echo "Checking format..."
 	cargo +nightly fmt
 
+## fmt-check: Check if fmt is correct
+fmt-check:
+	@echo "Checking code format..."
+	$(CARGO) +nightly fmt --check
+
 ## clean: Remove build artifacts and local container images
 clean:
 	@echo "Cleaning up..."
@@ -53,3 +58,6 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@grep -E '^##' $(MAKEFILE_LIST) | sed -e 's/## //' | column -t -s ':'
+
+## ci: Run the ci checks
+ci: fmt-check build lint test

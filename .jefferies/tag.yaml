@@ -1,0 +1,21 @@
+name: Tube Tag Pipeline
+
+on:
+  push:
+    tags:
+
+nodes:
+  - name: Build Tube Image
+    image: quay.io/buildah/stable:latest
+    checkout: true
+    privileged: true
+    env:
+      STORAGE_DRIVER: vfs
+    secrets:
+      env:
+        - QUAY_USERNAME
+        - QUAY_PASSWORD
+    steps:
+      - buildah login -u $QUAY_USERNAME -p $QUAY_PASSWORD quay.io
+      - buildah bud -f Containerfile -t quay.io/the-conn/tube:$JEFFERIES_TAG .
+      - buildah push quay.io/the-conn/tube:$JEFFERIES_TAG

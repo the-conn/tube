@@ -6,8 +6,9 @@ TAG              ?= latest
 FULL_IMAGE_NAME  := $(REGISTRY)/$(REPOSITORY)/$(IMAGE_NAME):$(TAG)
 
 CONTAINER_ENGINE := $(shell which podman 2>/dev/null || which docker)
+CARGO := cargo
 
-.PHONY: all build image push test lint fmt clean help
+.PHONY: all build image push test lint fmt clean help ci fmt-check
 
 all: fmt lint test build
 
@@ -41,6 +42,11 @@ fmt:
 	@echo "Checking format..."
 	cargo +nightly fmt
 
+## fmt-check: Check if fmt is correct
+fmt-check:
+	@echo "Checking code format..."
+	$(CARGO) +nightly fmt --all -- --check
+
 ## clean: Remove build artifacts and local container images
 clean:
 	@echo "Cleaning up..."
@@ -53,3 +59,6 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@grep -E '^##' $(MAKEFILE_LIST) | sed -e 's/## //' | column -t -s ':'
+
+## ci: Run the ci checks
+ci: fmt-check build lint test

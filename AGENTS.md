@@ -20,7 +20,9 @@ This document provides mandatory instructions for all AI-assisted development on
 
 ### 3. Formatting and Syntax
 * **Standard Characters**: No emojis, non-standard Unicode, or decorative ASCII.
-* **Documentation**: Update the `README.md` if changes affect the configuration, lifecycle, or deployment.
+* **Documentation**: Keep both `README.md` and `docs/architecture.md` in sync with the code.
+    * Update `README.md` when changes affect the configuration schema, environment variables, lifecycle, secrets handling, or deployment instructions.
+    * Update `docs/architecture.md` when changes affect the Pod composition (init containers, mounts, entrypoint), execution flow, secret-handling model, logging/upload behavior, failure surface, or the boundaries of what `tube` does and does not do. Keep its mermaid diagram accurate when the flow changes.
 
 ### 4. Technical Constraints
 * **Error Handling**: Adhere to established unified error enum patterns. Never use `unwrap` or `expect` in production code; all fallible operations must propagate errors through the appropriate error enum variant.
